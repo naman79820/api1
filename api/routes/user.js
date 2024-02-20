@@ -6,103 +6,134 @@ const jwt = require("jsonwebtoken");
 const nodemailer = require('nodemailer');
 const User = require("../models/user");
 
+
+
 router.post("/signup", (req, res, next) => {
   const verificationCode = Math.floor(10000 + Math.random() * 90000); // Generate 5-digit verification code
-  User.find({ email: req.body.email })
-    .exec()
-    .then(user => {
-      if (user.length >= 1) {
-        return res.status(409).json({
-          message: "Mail exists"
-        });
-      } else {
-        bcrypt.hash(req.body.password, 10, (err, hash) => {
-          if (err) {
-            return res.status(500).json({
-              error: err
-            });
-          } else {
-            const user = new User({
-              _id: new mongoose.Types.ObjectId(),
-              email: req.body.email,
-              password: hash,
-              verified: false, // Add a verified field
-              verificationCode: verificationCode // Assign verification code to user
-            });
-            user
-              .save()
-              .then(result => {
-                console.log(result);
-                // Send verification email
-                sendVerificationEmail(user.email, verificationCode);
-                res.status(201).json({
-                  message: "User created"
-                });
-              })
-              .catch(err => {
-                console.log(err);
-                res.status(500).json({
-                  error: err
-                });
-              });
-          }
-        });
-      }
+
+  const newUser = new User({
+    _id: new mongoose.Types.ObjectId(),
+    email: req.body.email,
+    verificationCode: verificationCode
+  });
+
+  // Send verification email
+  newUser.save() 
+  .then(() => {
+  sendVerificationEmail(req.body.email,verificationCode)
+  .then(() => {
+    
+      // Respond to client indicating that verification email has been sent
+      res.status(200).json({
+        message: "Verification email sent"
+      });
+    })
+  })
+    .catch(err => {
+      console.log(err);
+      res.status(500).json({
+        error: "Failed to send verification email"
+      });
     });
 });
 
 // Send verification email function
 function sendVerificationEmail(email, code) {
+  return new Promise((resolve, reject) => {
     // Configure nodemailer
     const transporter = nodemailer.createTransport({
-        service: 'gmail',
-        auth: {
-            user: 'naman79820@gmail.com',
-            pass: 'lvma mrvs kmea opye'
-        }
+      service: 'gmail',
+      auth: {
+        user: 'naman79820@gmail.com',
+        pass: 'lvma mrvs kmea opye'
+      }
     });
 
     // Email content
     const mailOptions = {
-        from: 'naman79820@gmail.com',
-        to: email,
-        subject: 'Email Verification',
-        text: `Your verification code is ${code}`
+      from: 'naman79820@gmail.com',
+      to: email,
+      subject: 'Email Verification',
+      text: `Your verification code is ${code}`
     };
 
     // Send email
     transporter.sendMail(mailOptions, (error, info) => {
-        if (error) {
-            console.log(error);
-        } else {
-            console.log('Email sent: ' + info.response);
-        }
+      if (error) {
+        reject(error);
+      } else {
+        console.log('Email sent: ' + info.response);
+        resolve();
+        console.log(email)
+      }
     });
+  });
 }
 
 router.get("/verify", (req, res, next) => {
-  const { code } = req.query;
+  const { code, email, password } = req.body;
+  console.log(req.body)
+  console.log(email)
+
   
-  User.findOneAndUpdate({ verificationCode: code }, { verified: true, verificationCode: null })
+  
+  if (!code || !email || !password) {
+    return res.status(400).json({
+      message: "Missing verification code, email, or password"
+    });
+    
+  }
+
+  User.findOne({ email, verificationCode})
     .exec()
     .then(user => {
+      console.log(email)
+      console.log(User)
       if (user) {
-        return res.status(200).json({
-          message: "Email verified successfully"
+        console.log("user")
+        // User found with matching verification code
+        bcrypt.hash(password, 10, (err, hash) => {
+          if (err) {
+            return res.status(500).json({
+              error: err,
+              message: "user not found with matching verification code"
+            });
+          } else {
+            // Update user details with hashed password and verified status
+            user.password = hash;
+            //user.verified = true;
+            user.verificationCode = null;
+            
+            user.save()
+            
+              .then(() => {
+                // Respond to client indicating successful verification
+                res.status(200).json({
+                  message: "Email verified and user created successfully"
+                });
+              })
+              .catch(err => {
+                console.log(err);
+                res.status(500).json({
+                  error: "Failed to save user details"
+                });
+              });
+          }
         });
       } else {
         return res.status(400).json({
-          message: "Invalid verification code"
+          message: "Invalid verification code or email"
         });
       }
     })
     .catch(err => {
       console.log(err);
       res.status(500).json({
-        error: err
+        error: "Failed to verify email"
       });
     });
 });
+
 router.post("/login", (req, res, next) => {
   User.find({ email: req.body.email })
     .exec()
